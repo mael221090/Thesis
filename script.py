@@ -8,6 +8,7 @@ Created on Wed Mar 26 23:12:35 2014
 
 #Database
 import MySQLdb
+from Buckets import *
 
 #Sklearn
 from sklearn.cross_validation import train_test_split
@@ -21,7 +22,6 @@ import numpy as np
 from random import gauss
 import random
 import pandas
-#import pylab as pl
 import nltk
 from nltk.corpus import stopwords
 import sys
@@ -30,21 +30,12 @@ from datetime import datetime
 import string
 from scipy.spatial import distance
 from collections import deque
+import pickle
 
 class DBConnector():
     def __init__(self):
         # Open database connection
         self.db = MySQLdb.connect("localhost","root","root","maelrazabdd");
-
-    def insertRecord(self, title, description, date, url, content):
-        # prepare a cursor object using cursor() method
-        cursor = self.db.cursor()
-        cursor.execute("select count(*) From News ")
-        for reading in cursor.fetchall():
-            print str(reading[0])
-
-        # disconnect from server
-        #self.db.close()
 
     def selectNews(self):
         t0 = time()
@@ -68,19 +59,45 @@ class DBConnector():
         for item in data:
             cursor.execute("update News set Processed = %s where ID = %s", ("1", str(item.ID)))
             
+
+        
+    def executeQuery(self, query):
+        cursor = self.db.cursor()
+        cursor.execute(query)
+        return cursor
+        
+    def insertResults(self, t, n, b, k, length, news_ID):
+        cursor = self.db.cursor()
+        try:
+            if news_ID is None:
+                cursor.execute("insert into Results (Threshold, NbBuckets, LengthDocs, NbRandomVectors,"
+                                       "NbDocsInBuckets) values (%s,%s,%s,%s,%s)", (str(t), str(b),
+                                        str(length), str(k), str(n)))              
+            else:
+                cursor.execute("insert into Results (Threshold, NbBuckets, LengthDocs, NbRandomVectors,"
+                           "NbDocsInBuckets, News_ID) values (%s,%s,%s,%s,%s,%s)", (str(t), str(b),
+                            str(length), str(k), str(n), str(news_ID))) 
+            
+            # Commit your changes in the database
+            self.db.commit()       
+        except:
+            # Rollback in case there is any error
+            self.db.rollback()        
+    
+    def closeConnection(self):
         self.db.close()
 
 class Document():        
     def __init__(self, ID, company_ID, title, date, summary, link, content, processed):
-            self.ID = ID
-            self.Company_ID = company_ID
-            self.Title = title
-            self.Date = date
-            self.Summary = summary
-            self.Link = link
-            self.Content = content  
-            self.Processed = processed
-            self.Vector = []    
+        self.ID = ID
+        self.Company_ID = company_ID
+        self.Title = title
+        self.Date = date
+        self.Summary = summary
+        self.Link = link
+        self.Content = content  
+        self.Processed = processed
+        self.Vector = []    
         
 class Corpus():
     def __init__(self, data):
@@ -191,13 +208,13 @@ class Parameters():
         self.length = 200 #fixed vector size of documents
         self.b = 20 #number of buckets
         self.T = 0.3 #threshold to compare the nearest neighbor        
-        self.k = 3 #k random vectors
+        self.k = 5 #k random vectors
         self.n = 20 #n number of stored documents with same hash in a bucket        
 
     def writeResults(self, results):
         t = datetime.now()
         filename = "./Logs/log_" + str(t.day) + "_" + str(t.month) + ".txt"
-        file = open(filename, "w")   
+        file = open(filename, "a")   
         file.write("Parameters:\n")
         file.write("Length of documents (length):" + str(self.length) + "\n")
         file.write("Number of buckets (b):" + str(self.b) + "\n")
@@ -210,21 +227,30 @@ class Parameters():
         if type(results) == tuple:
             file.write("Distance: " + str(results[0][0]) + "\n")
             file.write("Doc Id: " + str(results[1].ID) + "\n")
+            file.write("Doc Id: " + str(results[1].Summary) + "\n")
         else:
             file.write(results)
         
         file.write("\n\n")
         file.close()         
 
+
+      
+
+
 if __name__ == '__main__':
     print ("Start of program")
     #Parameters of the program
-    p = Parameters()    
+    p = Parameters()
     db = DBConnector()
     data = db.selectNews() 
     corpus = Corpus(data)
-    processing = Preprocessing(corpus.data, corpus.train, corpus.test, p.length)
     candidates = Neighbors()
+    
+    filename = 'Buckets/buckets_' + str(p.b) + '_' + str(p.k) + '.pickle'
+    buckets = loadBucketsFromFile(filename, p)       
+    
+    processing = Preprocessing(corpus.data, corpus.train, corpus.test, p.length)
     
     matrixTrain, Ids = processing.trainTfIDF()
     i = 0
@@ -239,13 +265,8 @@ if __name__ == '__main__':
         d = corpus.searchDocumentById(item)
         d.Vector = matrixTest[i]
         i += 1     
-    
-    #initialisation of b buckets and store them in a list named buckets
-    buckets = []
-    for i in range(0, p.b):
-        buck = Bucket(parameters=p)
-        buckets.append(buck)   
-    #simulation -- initialisation of the buckets with n 
+         
+    #initialisation of the buckets with n 
     for item in buckets:    
         for doc in corpus.train:
             tup = doc, item.getHashValue(doc.Vector)
@@ -263,7 +284,6 @@ if __name__ == '__main__':
         item.h.append(tup)    
         
     distance, shortest = candidates.getShortestDistance(corpus.test[0])
-    print str(distance) + "\n" 
     
     #comparison with the treshold
     if distance[0][0] <= p.T:
@@ -271,43 +291,13 @@ if __name__ == '__main__':
         tupRes = distance, shortest
     else:
         tupRes = "No new story found!"
+        
     
     p.writeResults(tupRes)
+                        
     
     #we treated each new document
     #db.updateRecord(corpus.test)
-        
+    db.closeConnection()
     print ("End of program")
     
-    
-    ##n docs simulated and generated
-    #documents = []
-    #id = 1
-    #for k in range(0, p.n):
-        ##initialise a doc
-        #u = [] #vector of a fixed number of bits, which is the length of the vector spaces
-        #for i in range(0, p.length):
-            #u.append(gauss(0, 1))   
-        #d = Document(id, 0, "", "", "", "", "", u)
-        #documents.append(d)
-        #id+=1    
-    #corpus = Corpus(documents)
-        
-        
-    #new document arriving
-    #v = []
-    #for i in range(0, p.length):
-        #v.append(gauss(0, 1))  
-    #d = Document(id, 0, "", "", "", "", "", v)
-    #corpus.corpus.append(d)        
-            
-    ##Get the hash value for the new document and comparison
-    #for item in buckets:
-        #for hash in item.h:
-            ##compare hashes with the hash value of the bucket for v
-            #if hash[1] == item.getHashValue(v):
-                ##store the doc in the candidates list
-                #candidates.candidates.append(hash[0])
-        ##don't forget to add the new document's hash value to the queue's bucket
-        #tup = v, item.getHashValue(v)
-        #item.h.append(tup)    

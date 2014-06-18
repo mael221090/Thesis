@@ -97,7 +97,7 @@ def insertRecord(company_ID, title, description, date, url, content):
                # Execute the SQL command
             cursor.execute("INSERT INTO News (Company_ID, Title, Date, Summary, Link, Content, Processed) values (%i,%s,%s,%s,%s,%s,%i)", (company_ID, title, date, description, url, content, 0))
              
-               # Commit your changes in the database
+            # Commit your changes in the database
             db.commit()
                
         except:

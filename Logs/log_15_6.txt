@@ -1,0 +1,13 @@
+Parameters:
+Length of documents (length):200
+Number of buckets (b):20
+Number of random vectors (k):3
+Number of stored documents (n):20
+Threshold (T):0.3
+
+
+Results of the nearest neighbor if found:
+Distance: [ 0.27656637]
+Doc Id: 15126
+
+
